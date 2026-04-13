@@ -103,5 +103,14 @@ fun LiabilityScreen(
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             textAlign = TextAlign.Center
         )
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Text(
+            text = "© 2026 Shawn Baird\nShawn's idea, made real by his AI Doug",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+            textAlign = TextAlign.Center
+        )
     }
 }
