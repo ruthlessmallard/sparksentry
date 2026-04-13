@@ -155,10 +155,12 @@ class MonitoringService : Service() {
     }
     
     private fun playWarningChirp() {
-        // Short warning tone
+        // Short warning tone using system alert
         try {
             mediaPlayer?.release()
-            mediaPlayer = MediaPlayer.create(this, R.raw.chirp).apply {
+            // Use system notification sound
+            val defaultSoundUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+            mediaPlayer = MediaPlayer.create(this, defaultSoundUri).apply {
                 setVolume(0.7f, 0.7f)
                 start()
             }
@@ -177,7 +179,9 @@ class MonitoringService : Service() {
             )
             
             mediaPlayer?.release()
-            mediaPlayer = MediaPlayer.create(this, R.raw.alarm).apply {
+            // Use system alarm sound
+            val alarmSoundUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+            mediaPlayer = MediaPlayer.create(this, alarmSoundUri).apply {
                 isLooping = true
                 setVolume(1.0f, 1.0f)
                 start()
