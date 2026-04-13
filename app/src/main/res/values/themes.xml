@@ -1,28 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.SparkSentry" parent="Theme.Material3.Dark.NoActionBar">
-        <!-- Primary brand colors -->
-        <item name="colorPrimary">@color/safety_yellow</item>
-        <item name="colorPrimaryContainer">@color/safety_yellow</item>
-        <item name="colorOnPrimary">@color/dark_grey_background</item>
-        
-        <!-- Secondary colors -->
-        <item name="colorSecondary">@color/tool_truck_red</item>
-        <item name="colorSecondaryContainer">@color/tool_truck_red</item>
-        <item name="colorOnSecondary">@color/white</item>
-        
-        <!-- Background -->
-        <item name="android:colorBackground">@color/dark_grey_background</item>
-        <item name="colorSurface">@color/dark_grey_surface</item>
-        <item name="colorOnBackground">@color/white</item>
-        <item name="colorOnSurface">@color/white</item>
-        
+    <style name="Theme.SparkSentry" parent="android:Theme.Material.NoActionBar">
         <!-- Status bar -->
         <item name="android:statusBarColor">@color/dark_grey_background</item>
         <item name="android:windowLightStatusBar">false</item>
-        
-        <!-- No action bar -->
-        <item name="windowActionBar">false</item>
-        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/dark_grey_background</item>
     </style>
 </resources>
