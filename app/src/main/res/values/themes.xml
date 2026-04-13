@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.SparkSentry" parent="Theme.MaterialComponents.Dark.NoActionBar">
+    <style name="Theme.SparkSentry" parent="Theme.MaterialComponents.NoActionBar">
         <!-- Primary brand colors -->
         <item name="colorPrimary">@color/safety_yellow</item>
         <item name="colorPrimaryVariant">@color/safety_yellow</item>
