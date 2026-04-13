@@ -63,7 +63,7 @@ class CameraManager(
         // Preview use case
         val preview = Preview.Builder()
             .build()
-            .also { it.surfaceProvider = surfaceProvider }
+            .also { it.setSurfaceProvider(surfaceProvider) }
         
         // Image analysis use case
         imageAnalysis = ImageAnalysis.Builder()
