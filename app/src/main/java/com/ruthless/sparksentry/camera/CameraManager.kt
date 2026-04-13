@@ -1,6 +1,5 @@
 package com.ruthless.sparksentry.camera
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
@@ -23,9 +22,14 @@ import java.util.concurrent.Executors
 
 /**
  * CameraManager handles CameraX setup and frame capture for fire detection
+ * 
+ * Detection logic:
+ * 1. Capture baseline image ("this is what normal looks like")
+ * 2. Compare new frames to baseline
+ * 3. Alert only if fire pixels increase significantly from baseline
  */
 class CameraManager(
-    private val context: Context,
+    private val context: android.content.Context,
     private val lifecycleOwner: LifecycleOwner,
     private val onFrameAnalyzed: (Bitmap, FireDetector.DetectionResult) -> Unit
 ) {
@@ -34,14 +38,38 @@ class CameraManager(
     private val fireDetector = FireDetector()
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     
-    // Sensitivity threshold (0-100, default 50)
+    // Baseline for comparison (what "normal" looks like)
+    private var baselineFirePixelCount: Int = 0
+    private var hasBaseline: Boolean = false
+    
+    // Sensitivity threshold (0-100, default 50) - HIGHER = MORE SENSITIVE
     private var sensitivityThreshold = 50
+    
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
     
+    /**
+     * Set sensitivity (0-100)
+     * 0-20: Low sensitivity (large fires only)
+     * 21-40: Moderate-low
+     * 41-60: Default
+     * 61-80: Moderate-high  
+     * 81-100: High sensitivity (catches small fires)
+     */
     fun setSensitivity(threshold: Int) {
         sensitivityThreshold = threshold
     }
+    
+    /**
+     * Capture current frame as baseline for comparison
+     */
+    fun captureBaseline() {
+        hasBaseline = false
+        // Next frame processed will be captured as baseline
+    }
+    
+    fun hasCapturedBaseline(): Boolean = hasBaseline
+    fun getBaselineCount(): Int = baselineFirePixelCount
     
     fun startCamera(surfaceProvider: Preview.SurfaceProvider, onError: (Exception) -> Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -79,19 +107,14 @@ class CameraManager(
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
         
         try {
-            // Unbind all use cases before rebinding
             provider.unbindAll()
-            
-            // Bind use cases to camera
             provider.bindToLifecycle(
                 lifecycleOwner,
                 cameraSelector,
                 preview,
                 imageAnalysis
             )
-            
             _isRunning.value = true
-            
         } catch (e: Exception) {
             Log.e(TAG, "Use case binding failed", e)
         }
@@ -101,24 +124,45 @@ class CameraManager(
         try {
             val bitmap = imageProxy.toBitmap()
             if (bitmap != null) {
-                // Adjust detection threshold based on sensitivity slider
-                // Lower sensitivity = higher threshold needed to trigger
-                val adjustedThreshold = when (sensitivityThreshold) {
-                    in 0..20 -> 5   // Very sensitive
-                    in 21..40 -> 4
-                    in 41..60 -> 3  // Default
-                    in 61..80 -> 2
-                    else -> 1       // Less sensitive
-                }
-                
                 val result = fireDetector.analyze(bitmap)
                 
-                // Apply sensitivity adjustment
-                val adjustedResult = if (result.firePixelCount >= adjustedThreshold) {
-                    result.copy(isFireDetected = true)
-                } else {
-                    result.copy(isFireDetected = false)
+                // If no baseline, capture this as baseline
+                if (!hasBaseline) {
+                    baselineFirePixelCount = result.firePixelCount
+                    hasBaseline = true
+                    Log.d(TAG, "Baseline captured: $baselineFirePixelCount fire pixels")
+                    onFrameAnalyzed(bitmap, result.copy(
+                        isFireDetected = false,
+                        confidence = 0
+                    ))
+                    return
                 }
+                
+                // Calculate percentage increase from baseline
+                val increaseFromBaseline = if (baselineFirePixelCount > 0) {
+                    ((result.firePixelCount - baselineFirePixelCount) * 100) / baselineFirePixelCount
+                } else {
+                    // If baseline had 0 fire pixels, any fire pixels is significant
+                    if (result.firePixelCount > 0) 100 else 0
+                }
+                
+                // Determine if this is a fire based on sensitivity setting
+                // Higher sensitivity = lower threshold needed
+                val thresholdPercent = when (sensitivityThreshold) {
+                    in 0..20 -> 200   // Must be 200% increase (large fires only)
+                    in 21..40 -> 100  // Must be 100% increase
+                    in 41..60 -> 50   // Default: 50% increase
+                    in 61..80 -> 25   // 25% increase
+                    in 81..100 -> 10  // 10% increase (very sensitive)
+                    else -> 50
+                }
+                
+                val isFire = increaseFromBaseline >= thresholdPercent && result.firePixelCount > baselineFirePixelCount
+                
+                val adjustedResult = result.copy(
+                    isFireDetected = isFire,
+                    confidence = if (isFire) minOf(increaseFromBaseline, 100) else 0
+                )
                 
                 onFrameAnalyzed(bitmap, adjustedResult)
             }

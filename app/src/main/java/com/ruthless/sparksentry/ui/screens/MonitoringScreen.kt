@@ -223,15 +223,34 @@ fun MonitoringScreen() {
                 ActionButton(
                     text = "SET BASELINE",
                     color = SafetyYellow,
-                    onClick = { state = MonitoringState.BASELINE_SET }
+                    onClick = { 
+                        cameraManager.captureBaseline()
+                        state = MonitoringState.BASELINE_SET 
+                    }
                 )
             }
             MonitoringState.BASELINE_SET -> {
-                ActionButton(
-                    text = "START MONITORING",
-                    color = SuccessGreen,
-                    onClick = { state = MonitoringState.SENTRY }
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (!cameraManager.hasCapturedBaseline()) {
+                        StatusBadge(
+                            text = "Capturing baseline...",
+                            color = SafetyYellow
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    } else {
+                        StatusBadge(
+                            text = "✓ Baseline captured",
+                            color = SuccessGreen
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    ActionButton(
+                        text = "START MONITORING",
+                        color = SuccessGreen,
+                        enabled = cameraManager.hasCapturedBaseline(),
+                        onClick = { state = MonitoringState.SENTRY }
+                    )
+                }
             }
             MonitoringState.SENTRY -> {
                 Column {
@@ -314,13 +333,13 @@ fun SensitivitySlider(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Less", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            Text("Low", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             Text(
                 "$sensitivity%",
                 fontWeight = FontWeight.Bold,
                 color = SafetyYellow
             )
-            Text("More", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            Text("High", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         }
         
         Slider(
@@ -334,13 +353,14 @@ fun SensitivitySlider(
             )
         )
         
+        // Updated descriptions - higher % = more sensitive (catches smaller fires)
         Text(
             text = when (sensitivity) {
-                in 0..20 -> "High sensitivity - may trigger on sparks"
-                in 21..40 -> "Moderate-high sensitivity"
-                in 41..60 -> "Default sensitivity"
-                in 61..80 -> "Moderate-low sensitivity"
-                else -> "Low sensitivity - only large fires"
+                in 0..20 -> "Low - Large fires only"
+                in 21..40 -> "Moderate-low"
+                in 41..60 -> "Default"
+                in 61..80 -> "Moderate-high"
+                else -> "High - Catches small fires"
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -405,21 +425,32 @@ fun StatusIndicator(state: MonitoringState, confidence: Int) {
 fun ActionButton(
     text: String,
     color: Color,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp),
         shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = color)
+        colors = ButtonDefaults.buttonColors(
+            containerColor = color,
+            disabledContainerColor = color.copy(alpha = 0.3f)
+        )
     ) {
         Text(
             text = text,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = if (color == SafetyYellow) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onPrimary
+            color = if (!enabled) {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+            } else if (color == SafetyYellow) {
+                MaterialTheme.colorScheme.background
+            } else {
+                MaterialTheme.colorScheme.onPrimary
+            }
         )
     }
 }
