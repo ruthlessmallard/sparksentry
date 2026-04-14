@@ -101,9 +101,12 @@ fun MonitoringScreen() {
             onFrameAnalyzed = { bitmap, result, phase ->
                 detectionConfidence = result.confidence
                 
+                android.util.Log.d("SparkSentry", "Phase: $phase, prev: $previousPhase, isCal: $isCalibrating")
+                
                 // Check for CALIBRATING -> IDLE transition (baseline captured)
                 if (previousPhase == CameraManager.DetectionPhase.CALIBRATING && 
                     phase == CameraManager.DetectionPhase.IDLE) {
+                    android.util.Log.d("SparkSentry", "Baseline captured! Transitioning to BASELINE_SET")
                     hasBaselineBeenCaptured = true
                     state = MonitoringState.BASELINE_SET
                 }
