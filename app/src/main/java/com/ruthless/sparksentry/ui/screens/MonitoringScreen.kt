@@ -46,7 +46,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.ruthless.sparksentry.camera.CameraManager
-import com.ruthless.sparksentry.fire.FireDetector
 import com.ruthless.sparksentry.ui.theme.AlertOrange
 import com.ruthless.sparksentry.ui.theme.SafetyYellow
 import com.ruthless.sparksentry.ui.theme.SuccessGreen
@@ -54,11 +53,10 @@ import com.ruthless.sparksentry.ui.theme.ToolTruckRed
 import kotlinx.coroutines.delay
 
 enum class MonitoringState {
-    IDLE,           // No baseline set
-    BASELINE_SET,   // Baseline captured, ready to monitor
-    SENTRY,         // Active monitoring - slow check
-    CONFIRM,        // Fire detected, rapid confirmation
-    ALARM           // Confirmed fire - full alarm
+    IDLE,
+    MONITORING,
+    CONFIRM,
+    ALARM
 }
 
 @Composable
@@ -70,9 +68,7 @@ fun MonitoringScreen() {
     var sensitivity by remember { mutableIntStateOf(50) }
     var detectionConfidence by remember { mutableIntStateOf(0) }
     var hasCameraPermission by remember { mutableStateOf(false) }
-    var isCalibrating by remember { mutableStateOf(false) }
     
-    // Check camera permission
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -89,49 +85,17 @@ fun MonitoringScreen() {
         }
     }
     
-    // Track baseline state and previous phase for transition detection
-    var hasBaselineBeenCaptured by remember { mutableStateOf(false) }
-    var previousPhase by remember { mutableStateOf(CameraManager.DetectionPhase.IDLE) }
-    
-    // Camera manager
     val cameraManager = remember {
         CameraManager(
             context = context,
             lifecycleOwner = lifecycleOwner,
-            onFrameAnalyzed = { bitmap, result, phase ->
-                detectionConfidence = result.confidence
-                
-                android.util.Log.d("SparkSentry", "Phase: $phase, prev: $previousPhase, isCal: $isCalibrating")
-                
-                // Check for CALIBRATING -> IDLE transition (baseline captured)
-                if (previousPhase == CameraManager.DetectionPhase.CALIBRATING && 
-                    phase == CameraManager.DetectionPhase.IDLE) {
-                    android.util.Log.d("SparkSentry", "Baseline captured! Transitioning to BASELINE_SET")
-                    hasBaselineBeenCaptured = true
-                    state = MonitoringState.BASELINE_SET
-                }
-                
-                // Update tracking
-                previousPhase = phase
-                isCalibrating = (phase == CameraManager.DetectionPhase.CALIBRATING)
-                
-                // Handle other phases
-                when (phase) {
-                    CameraManager.DetectionPhase.SENTRY -> {
-                        state = MonitoringState.SENTRY
-                    }
-                    CameraManager.DetectionPhase.CONFIRM -> {
-                        state = MonitoringState.CONFIRM
-                    }
-                    CameraManager.DetectionPhase.ALARM -> {
-                        state = MonitoringState.ALARM
-                    }
-                    CameraManager.DetectionPhase.CALIBRATING -> {
-                        // Stay in current UI state, just show calibration indicator
-                    }
-                    CameraManager.DetectionPhase.IDLE -> {
-                        // Only handle the transition case above
-                    }
+            onFrameAnalyzed = { _, detectionState, confidence ->
+                detectionConfidence = confidence
+                state = when (detectionState) {
+                    CameraManager.DetectionState.IDLE -> MonitoringState.IDLE
+                    CameraManager.DetectionState.MONITORING -> MonitoringState.MONITORING
+                    CameraManager.DetectionState.CONFIRM -> MonitoringState.CONFIRM
+                    CameraManager.DetectionState.ALARM -> MonitoringState.ALARM
                 }
             }
         )
@@ -143,17 +107,15 @@ fun MonitoringScreen() {
         }
     }
     
-    // Update sensitivity when slider changes
     LaunchedEffect(sensitivity) {
         cameraManager.setSensitivity(sensitivity)
     }
     
-    // Auto-reset alarm after 10 seconds
     LaunchedEffect(state) {
         if (state == MonitoringState.ALARM) {
             delay(10000)
             cameraManager.resetAlarm()
-            state = MonitoringState.SENTRY
+            state = MonitoringState.MONITORING
         }
     }
     
@@ -163,7 +125,6 @@ fun MonitoringScreen() {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Header
         Text(
             text = "SparkSentry",
             style = MaterialTheme.typography.headlineLarge,
@@ -179,12 +140,10 @@ fun MonitoringScreen() {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Status indicator
         StatusIndicator(state = state, confidence = detectionConfidence)
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Camera preview
         if (hasCameraPermission) {
             Box(
                 modifier = Modifier
@@ -203,36 +162,18 @@ fun MonitoringScreen() {
                     update = { previewView ->
                         cameraManager.startCamera(
                             surfaceProvider = previewView.surfaceProvider,
-                            onError = { /* Handle error */ }
+                            onError = { }
                         )
                     }
                 )
                 
-                // Overlay hint text when idle
-                if (state == MonitoringState.IDLE && !isCalibrating) {
+                if (state == MonitoringState.IDLE) {
                     Text(
                         text = "Camera Preview\n(Set phone on tripod and frame work area)",
                         modifier = Modifier.align(Alignment.Center),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                     )
-                }
-                
-                // Calibration indicator
-                if (isCalibrating) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.5f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "📸 Capturing baseline...",
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
                 }
             }
         } else {
@@ -245,7 +186,7 @@ fun MonitoringScreen() {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Camera permission required\nGrant permission to continue",
+                    text = "Camera permission required",
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
@@ -254,7 +195,6 @@ fun MonitoringScreen() {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Sensitivity slider (only show when monitoring or ready)
         if (state != MonitoringState.IDLE) {
             SensitivitySlider(
                 sensitivity = sensitivity,
@@ -263,55 +203,29 @@ fun MonitoringScreen() {
             Spacer(modifier = Modifier.height(16.dp))
         }
         
-        // Action buttons
         when (state) {
             MonitoringState.IDLE -> {
                 ActionButton(
-                    text = "SET BASELINE",
+                    text = "START MONITORING",
                     color = SafetyYellow,
-                    onClick = { 
-                        cameraManager.startCalibration()
-                        isCalibrating = true
+                    onClick = {
+                        cameraManager.startMonitoring()
+                        state = MonitoringState.MONITORING
                     }
                 )
             }
-            MonitoringState.BASELINE_SET -> {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (!hasBaselineBeenCaptured && isCalibrating) {
-                        StatusBadge(
-                            text = "Capturing baseline...",
-                            color = SafetyYellow
-                        )
-                    } else {
-                        StatusBadge(
-                            text = "✓ Baseline captured",
-                            color = SuccessGreen
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    ActionButton(
-                        text = "START MONITORING",
-                        color = SuccessGreen,
-                        enabled = hasBaselineBeenCaptured,
-                        onClick = { 
-                            cameraManager.startMonitoring()
-                            state = MonitoringState.SENTRY
-                        }
-                    )
-                }
-            }
-            MonitoringState.SENTRY -> {
+            MonitoringState.MONITORING -> {
                 Column {
                     StatusBadge(
-                        text = "SENTRY MODE",
+                        text = "MONITORING ACTIVE",
                         color = SuccessGreen
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     ActionButton(
-                        text = "STOP MONITORING",
+                        text = "STOP",
                         color = ToolTruckRed,
-                        onClick = { 
-                            state = MonitoringState.BASELINE_SET
+                        onClick = {
+                            state = MonitoringState.IDLE
                             cameraManager.stopMonitoring()
                         }
                     )
@@ -320,15 +234,15 @@ fun MonitoringScreen() {
             MonitoringState.CONFIRM -> {
                 Column {
                     StatusBadge(
-                        text = "⚠️ FIRE DETECTED - Confirming... ${detectionConfidence}%",
+                        text = "⚠️ CHECKING... ${detectionConfidence}%",
                         color = AlertOrange
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     ActionButton(
-                        text = "STOP MONITORING",
+                        text = "STOP",
                         color = ToolTruckRed,
-                        onClick = { 
-                            state = MonitoringState.BASELINE_SET
+                        onClick = {
+                            state = MonitoringState.IDLE
                             cameraManager.stopMonitoring()
                         }
                     )
@@ -357,8 +271,6 @@ fun MonitoringScreen() {
                         )
                     }
                 }
-                
-                // Auto-reset handled in LaunchedEffect above
             }
         }
     }
@@ -378,8 +290,7 @@ fun SensitivitySlider(
         Text(
             text = "Alert Sensitivity",
             style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
+            fontWeight = FontWeight.Medium
         )
         
         Spacer(modifier = Modifier.height(8.dp))
@@ -408,7 +319,6 @@ fun SensitivitySlider(
             )
         )
         
-        // Updated descriptions - higher % = more sensitive (catches smaller fires)
         Text(
             text = when (sensitivity) {
                 in 0..20 -> "Low - Large fires only"
@@ -428,19 +338,15 @@ fun StatusIndicator(state: MonitoringState, confidence: Int) {
     val (color, text) = when (state) {
         MonitoringState.IDLE -> Pair(
             MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f),
-            "Set baseline to begin"
-        )
-        MonitoringState.BASELINE_SET -> Pair(
-            SafetyYellow,
             "Ready to monitor"
         )
-        MonitoringState.SENTRY -> Pair(
+        MonitoringState.MONITORING -> Pair(
             SuccessGreen,
-            "Monitoring active"
+            "Monitoring"
         )
         MonitoringState.CONFIRM -> Pair(
             AlertOrange,
-            "Checking fire... ${confidence}%"
+            "Checking... ${confidence}%"
         )
         MonitoringState.ALARM -> Pair(
             ToolTruckRed,
@@ -458,8 +364,7 @@ fun StatusIndicator(state: MonitoringState, confidence: Int) {
         ) {
             val icon = when (state) {
                 MonitoringState.IDLE -> "📷"
-                MonitoringState.BASELINE_SET -> "✓"
-                MonitoringState.SENTRY -> "👁"
+                MonitoringState.MONITORING -> "👁"
                 MonitoringState.CONFIRM -> "⚠"
                 MonitoringState.ALARM -> "🔥"
             }
@@ -480,32 +385,21 @@ fun StatusIndicator(state: MonitoringState, confidence: Int) {
 fun ActionButton(
     text: String,
     color: Color,
-    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Button(
         onClick = onClick,
-        enabled = enabled,
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp),
         shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = color,
-            disabledContainerColor = color.copy(alpha = 0.3f)
-        )
+        colors = ButtonDefaults.buttonColors(containerColor = color)
     ) {
         Text(
             text = text,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = if (!enabled) {
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-            } else if (color == SafetyYellow) {
-                MaterialTheme.colorScheme.background
-            } else {
-                MaterialTheme.colorScheme.onPrimary
-            }
+            color = if (color == SafetyYellow) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onPrimary
         )
     }
 }
