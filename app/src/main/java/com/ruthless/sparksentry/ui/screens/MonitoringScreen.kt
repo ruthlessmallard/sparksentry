@@ -89,8 +89,9 @@ fun MonitoringScreen() {
         }
     }
     
-    // Track baseline state locally since we can't reference cameraManager in its init
+    // Track baseline state and previous phase for transition detection
     var hasBaselineBeenCaptured by remember { mutableStateOf(false) }
+    var previousPhase by remember { mutableStateOf(CameraManager.DetectionPhase.IDLE) }
     
     // Camera manager
     val cameraManager = remember {
@@ -100,17 +101,19 @@ fun MonitoringScreen() {
             onFrameAnalyzed = { bitmap, result, phase ->
                 detectionConfidence = result.confidence
                 
-                // Map CameraManager phase to UI state
+                // Check for CALIBRATING -> IDLE transition (baseline captured)
+                if (previousPhase == CameraManager.DetectionPhase.CALIBRATING && 
+                    phase == CameraManager.DetectionPhase.IDLE) {
+                    hasBaselineBeenCaptured = true
+                    state = MonitoringState.BASELINE_SET
+                }
+                
+                // Update tracking
+                previousPhase = phase
                 isCalibrating = (phase == CameraManager.DetectionPhase.CALIBRATING)
                 
+                // Handle other phases
                 when (phase) {
-                    CameraManager.DetectionPhase.IDLE -> {
-                        // When we enter IDLE from CALIBRATING, baseline was captured
-                        if (isCalibrating) {
-                            hasBaselineBeenCaptured = true
-                            state = MonitoringState.BASELINE_SET
-                        }
-                    }
                     CameraManager.DetectionPhase.SENTRY -> {
                         state = MonitoringState.SENTRY
                     }
@@ -122,6 +125,9 @@ fun MonitoringScreen() {
                     }
                     CameraManager.DetectionPhase.CALIBRATING -> {
                         // Stay in current UI state, just show calibration indicator
+                    }
+                    CameraManager.DetectionPhase.IDLE -> {
+                        // Only handle the transition case above
                     }
                 }
             }
