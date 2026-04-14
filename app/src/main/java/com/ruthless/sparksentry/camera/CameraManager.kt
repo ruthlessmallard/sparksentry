@@ -55,7 +55,6 @@ class CameraManager(
     private var currentPhase = DetectionPhase.IDLE
     private var frameCounter = 0
     private var confirmationFrames = 0
-    private const val CONFIRMATION_THRESHOLD = 5 // Need 5 consecutive frames to alarm
     
     // Sensitivity threshold (0-100, default 50) - HIGHER = MORE SENSITIVE
     private var sensitivityThreshold = 50
@@ -213,7 +212,7 @@ class CameraManager(
                             confirmationFrames++
                             val confidence = (confirmationFrames * 100) / CONFIRMATION_THRESHOLD
                             
-                            if (confirmationFrames >= CONFIRMATION_THRESHOLD) {
+                            if (confirmationFrames >= Companion.CONFIRMATION_THRESHOLD) {
                                 // Fire confirmed!
                                 currentPhase = DetectionPhase.ALARM
                                 Log.d(TAG, "Fire confirmed! Alarm triggered.")
@@ -312,6 +311,7 @@ class CameraManager(
     
     companion object {
         private const val TAG = "CameraManager"
+        private const val CONFIRMATION_THRESHOLD = 5 // Need 5 consecutive frames to alarm
     }
 }
 
