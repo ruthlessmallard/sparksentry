@@ -98,22 +98,26 @@ fun MonitoringScreen() {
                 detectionConfidence = result.confidence
                 
                 // Map CameraManager phase to UI state
+                isCalibrating = (phase == CameraManager.DetectionPhase.CALIBRATING)
+                
                 when (phase) {
-                    CameraManager.DetectionPhase.IDLE,
-                    CameraManager.DetectionPhase.CALIBRATING -> {
-                        isCalibrating = (phase == CameraManager.DetectionPhase.CALIBRATING)
+                    CameraManager.DetectionPhase.IDLE -> {
+                        // If we have a baseline, we're ready to monitor
+                        if (cameraManager.hasCapturedBaseline()) {
+                            state = MonitoringState.BASELINE_SET
+                        }
                     }
                     CameraManager.DetectionPhase.SENTRY -> {
                         state = MonitoringState.SENTRY
-                        isCalibrating = false
                     }
                     CameraManager.DetectionPhase.CONFIRM -> {
                         state = MonitoringState.CONFIRM
-                        isCalibrating = false
                     }
                     CameraManager.DetectionPhase.ALARM -> {
                         state = MonitoringState.ALARM
-                        isCalibrating = false
+                    }
+                    CameraManager.DetectionPhase.CALIBRATING -> {
+                        // Stay in current UI state, just show calibration indicator
                     }
                 }
             }
