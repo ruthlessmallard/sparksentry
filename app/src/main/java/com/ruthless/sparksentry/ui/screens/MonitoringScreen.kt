@@ -89,6 +89,9 @@ fun MonitoringScreen() {
         }
     }
     
+    // Track baseline state locally since we can't reference cameraManager in its init
+    var hasBaselineBeenCaptured by remember { mutableStateOf(false) }
+    
     // Camera manager
     val cameraManager = remember {
         CameraManager(
@@ -102,8 +105,9 @@ fun MonitoringScreen() {
                 
                 when (phase) {
                     CameraManager.DetectionPhase.IDLE -> {
-                        // If we have a baseline, we're ready to monitor
-                        if (cameraManager.hasCapturedBaseline()) {
+                        // When we enter IDLE from CALIBRATING, baseline was captured
+                        if (isCalibrating) {
+                            hasBaselineBeenCaptured = true
                             state = MonitoringState.BASELINE_SET
                         }
                     }
@@ -264,14 +268,22 @@ fun MonitoringScreen() {
             }
             MonitoringState.BASELINE_SET -> {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    StatusBadge(
-                        text = "✓ Baseline captured",
-                        color = SuccessGreen
-                    )
+                    if (!hasBaselineBeenCaptured && isCalibrating) {
+                        StatusBadge(
+                            text = "Capturing baseline...",
+                            color = SafetyYellow
+                        )
+                    } else {
+                        StatusBadge(
+                            text = "✓ Baseline captured",
+                            color = SuccessGreen
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     ActionButton(
                         text = "START MONITORING",
                         color = SuccessGreen,
+                        enabled = hasBaselineBeenCaptured,
                         onClick = { 
                             cameraManager.startMonitoring()
                             state = MonitoringState.SENTRY
