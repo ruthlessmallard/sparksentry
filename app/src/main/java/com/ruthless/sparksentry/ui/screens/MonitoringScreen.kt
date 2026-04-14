@@ -51,6 +51,7 @@ import com.ruthless.sparksentry.ui.theme.AlertOrange
 import com.ruthless.sparksentry.ui.theme.SafetyYellow
 import com.ruthless.sparksentry.ui.theme.SuccessGreen
 import com.ruthless.sparksentry.ui.theme.ToolTruckRed
+import kotlinx.coroutines.delay
 
 enum class MonitoringState {
     IDLE,           // No baseline set
@@ -69,6 +70,7 @@ fun MonitoringScreen() {
     var sensitivity by remember { mutableIntStateOf(50) }
     var detectionConfidence by remember { mutableIntStateOf(0) }
     var hasCameraPermission by remember { mutableStateOf(false) }
+    var isCalibrating by remember { mutableStateOf(false) }
     
     // Check camera permission
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -92,21 +94,26 @@ fun MonitoringScreen() {
         CameraManager(
             context = context,
             lifecycleOwner = lifecycleOwner,
-            onFrameAnalyzed = { bitmap, result ->
-                if (result.isFireDetected) {
-                    detectionConfidence = result.confidence
-                    when (state) {
-                        MonitoringState.SENTRY -> state = MonitoringState.CONFIRM
-                        MonitoringState.CONFIRM -> {
-                            if (result.confidence > 50) {
-                                state = MonitoringState.ALARM
-                            }
-                        }
-                        else -> {}
+            onFrameAnalyzed = { bitmap, result, phase ->
+                detectionConfidence = result.confidence
+                
+                // Map CameraManager phase to UI state
+                when (phase) {
+                    CameraManager.DetectionPhase.IDLE,
+                    CameraManager.DetectionPhase.CALIBRATING -> {
+                        isCalibrating = (phase == CameraManager.DetectionPhase.CALIBRATING)
                     }
-                } else {
-                    if (state == MonitoringState.CONFIRM) {
+                    CameraManager.DetectionPhase.SENTRY -> {
                         state = MonitoringState.SENTRY
+                        isCalibrating = false
+                    }
+                    CameraManager.DetectionPhase.CONFIRM -> {
+                        state = MonitoringState.CONFIRM
+                        isCalibrating = false
+                    }
+                    CameraManager.DetectionPhase.ALARM -> {
+                        state = MonitoringState.ALARM
+                        isCalibrating = false
                     }
                 }
             }
@@ -122,6 +129,15 @@ fun MonitoringScreen() {
     // Update sensitivity when slider changes
     LaunchedEffect(sensitivity) {
         cameraManager.setSensitivity(sensitivity)
+    }
+    
+    // Auto-reset alarm after 10 seconds
+    LaunchedEffect(state) {
+        if (state == MonitoringState.ALARM) {
+            delay(10000)
+            cameraManager.resetAlarm()
+            state = MonitoringState.SENTRY
+        }
     }
     
     Column(
@@ -168,25 +184,38 @@ fun MonitoringScreen() {
                     },
                     modifier = Modifier.fillMaxSize(),
                     update = { previewView ->
-                        if (state != MonitoringState.IDLE) {
-                            cameraManager.startCamera(
-                                surfaceProvider = previewView.surfaceProvider,
-                                onError = { /* Handle error */ }
-                            )
-                        } else {
-                            cameraManager.stopCamera()
-                        }
+                        cameraManager.startCamera(
+                            surfaceProvider = previewView.surfaceProvider,
+                            onError = { /* Handle error */ }
+                        )
                     }
                 )
                 
                 // Overlay hint text when idle
-                if (state == MonitoringState.IDLE) {
+                if (state == MonitoringState.IDLE && !isCalibrating) {
                     Text(
                         text = "Camera Preview\n(Set phone on tripod and frame work area)",
                         modifier = Modifier.align(Alignment.Center),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                     )
+                }
+                
+                // Calibration indicator
+                if (isCalibrating) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "📸 Capturing baseline...",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         } else {
@@ -224,38 +253,32 @@ fun MonitoringScreen() {
                     text = "SET BASELINE",
                     color = SafetyYellow,
                     onClick = { 
-                        cameraManager.captureBaseline()
-                        state = MonitoringState.BASELINE_SET 
+                        cameraManager.startCalibration()
+                        isCalibrating = true
                     }
                 )
             }
             MonitoringState.BASELINE_SET -> {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (!cameraManager.hasCapturedBaseline()) {
-                        StatusBadge(
-                            text = "Capturing baseline...",
-                            color = SafetyYellow
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    } else {
-                        StatusBadge(
-                            text = "✓ Baseline captured",
-                            color = SuccessGreen
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
+                    StatusBadge(
+                        text = "✓ Baseline captured",
+                        color = SuccessGreen
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
                     ActionButton(
                         text = "START MONITORING",
                         color = SuccessGreen,
-                        enabled = cameraManager.hasCapturedBaseline(),
-                        onClick = { state = MonitoringState.SENTRY }
+                        onClick = { 
+                            cameraManager.startMonitoring()
+                            state = MonitoringState.SENTRY
+                        }
                     )
                 }
             }
             MonitoringState.SENTRY -> {
                 Column {
                     StatusBadge(
-                        text = "SENTRY MODE - Checking every 15s",
+                        text = "SENTRY MODE",
                         color = SuccessGreen
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -264,16 +287,27 @@ fun MonitoringScreen() {
                         color = ToolTruckRed,
                         onClick = { 
                             state = MonitoringState.BASELINE_SET
-                            cameraManager.stopCamera()
+                            cameraManager.stopMonitoring()
                         }
                     )
                 }
             }
             MonitoringState.CONFIRM -> {
-                StatusBadge(
-                    text = "⚠️ FIRE DETECTED - Confirming...",
-                    color = AlertOrange
-                )
+                Column {
+                    StatusBadge(
+                        text = "⚠️ FIRE DETECTED - Confirming... ${detectionConfidence}%",
+                        color = AlertOrange
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    ActionButton(
+                        text = "STOP MONITORING",
+                        color = ToolTruckRed,
+                        onClick = { 
+                            state = MonitoringState.BASELINE_SET
+                            cameraManager.stopMonitoring()
+                        }
+                    )
+                }
             }
             MonitoringState.ALARM -> {
                 Box(
@@ -299,11 +333,7 @@ fun MonitoringScreen() {
                     }
                 }
                 
-                // Auto-reset after 10 seconds
-                LaunchedEffect(Unit) {
-                    kotlinx.coroutines.delay(10000)
-                    state = MonitoringState.SENTRY
-                }
+                // Auto-reset handled in LaunchedEffect above
             }
         }
     }
