@@ -66,8 +66,8 @@ class FireDetector {
         // Phase 2: Temporal flicker analysis
         val flickerScore = analyzeFlicker(fireRatio)
 
-        // Combined decision
-        val isFire = fireRatio > 0.03f && flickerScore > 0.6f
+        // Combined decision (lowered threshold for gas flames)
+        val isFire = fireRatio > 0.025f && flickerScore > 0.5f
         val confidence = (flickerScore * 100).toInt().coerceIn(0, 100)
 
         return DetectionResult(
@@ -110,15 +110,15 @@ class FireDetector {
             }
         }
 
-        // Fire flickers at 5-15Hz
-        // With 10 samples/second, that's 10-30 crossings in 2 seconds
+        // Fire flicker: Wood fires 8-15Hz, Gas flames 2-8Hz (broader band)
+        // With 10 samples/second over 2 seconds = 20 samples
         val crossingRate = zeroCrossings.toFloat()
 
         return when {
-            crossingRate < 5f -> 0.2f  // Too slow (static object)
-            crossingRate in 10f..25f -> 0.9f  // Ideal fire flicker
+            crossingRate < 3f -> 0.15f  // Too slow (static object)
+            crossingRate in 4f..30f -> 0.85f  // Broad fire/gas flicker range
             crossingRate > 40f -> 0.4f  // Too fast (electrical/artifact)
-            else -> 0.7f  // Moderate flicker
+            else -> 0.6f  // Borderline
         }
     }
 
