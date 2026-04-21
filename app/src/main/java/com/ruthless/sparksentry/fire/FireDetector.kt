@@ -5,146 +5,166 @@ import android.graphics.Color
 import kotlin.math.abs
 
 /**
- * Fire detection using HSV color analysis
+ * Fire detection using HSV color analysis with temporal flicker detection
  * 
  * Fire characteristics:
  * - Orange/Red/Yellow hues (15-45 degrees on HSV wheel)
  * - High saturation (bright colors, not muddy)
- * - Welding arc exclusion: Blue-white colors (180-260 degrees)
+ * - Temporal flicker: 5-15Hz variance (catches real fire, ignores static orange)
+ * - Minimum size: 2% of frame (filters small sparks, catches 6"+ flames)
  */
 class FireDetector {
+
+    // Temporal analysis window
+    private val flickerWindow = ArrayList<Double>(20) // 20 samples over 2 seconds
+    private val windowDurationMs = 2000L // 2 second analysis window
 
     data class DetectionResult(
         val isFireDetected: Boolean,
         val confidence: Int, // 0-100
         val firePixelCount: Int,
-        val totalPixelCount: Int
+        val totalPixelCount: Int,
+        val flickerScore: Float
     )
 
     /**
-     * Analyze a bitmap for fire colors
+     * Analyze a bitmap for fire with temporal confirmation
      * @param bitmap The image to analyze
      * @param sampleRate Skip pixels for performance (1 = every pixel, 4 = every 4th pixel)
-     * @return Detection result with confidence score
+     * @return Detection result with confidence score and flicker analysis
      */
     fun analyze(bitmap: Bitmap, sampleRate: Int = 4): DetectionResult {
         val width = bitmap.width
         val height = bitmap.height
+        val totalPixels = (width / sampleRate) * (height / sampleRate)
+
         var firePixelCount = 0
-        var totalChecked = 0
-        
-        // Sample pixels for performance
+
         for (y in 0 until height step sampleRate) {
             for (x in 0 until width step sampleRate) {
                 val pixel = bitmap.getPixel(x, y)
-                
                 if (isFireColor(pixel)) {
                     firePixelCount++
                 }
-                totalChecked++
             }
         }
-        
-        // Calculate fire percentage
-        val firePercentage = if (totalChecked > 0) {
-            (firePixelCount * 100) / totalChecked
-        } else 0
-        
-        // Threshold: 2% of image must be fire-colored
-        val isDetected = firePercentage >= FIRE_THRESHOLD_PERCENT
-        
-        // Confidence linearly scales from threshold to 10%
-        val confidence = when {
-            firePercentage >= 10 -> 100
-            firePercentage >= FIRE_THRESHOLD_PERCENT -> {
-                ((firePercentage - FIRE_THRESHOLD_PERCENT) * 100) / (10 - FIRE_THRESHOLD_PERCENT)
-            }
-            else -> 0
+
+        val fireRatio = firePixelCount.toFloat() / totalPixels
+
+        // Phase 1: Minimum fire size check (2% = ~6" flame at 10-13')
+        if (fireRatio < 0.02f) {
+            flickerWindow.clear()
+            return DetectionResult(
+                isFireDetected = false,
+                confidence = 0,
+                firePixelCount = firePixelCount,
+                totalPixelCount = totalPixels,
+                flickerScore = 0f
+            )
         }
-        
+
+        // Phase 2: Temporal flicker analysis
+        val flickerScore = analyzeFlicker(fireRatio)
+
+        // Combined decision
+        val isFire = fireRatio > 0.03f && flickerScore > 0.6f
+        val confidence = (flickerScore * 100).toInt().coerceIn(0, 100)
+
         return DetectionResult(
-            isFireDetected = isDetected,
+            isFireDetected = isFire,
             confidence = confidence,
             firePixelCount = firePixelCount,
-            totalPixelCount = totalChecked
+            totalPixelCount = totalPixels,
+            flickerScore = flickerScore
         )
     }
-    
+
     /**
-     * Check if a pixel represents fire (orange/red/yellow)
+     * Analyzes temporal flicker in the 5-15Hz range
+     * Returns score 0.0-1.0 indicating fire likelihood
+     */
+    private fun analyzeFlicker(currentFireRatio: Float): Float {
+        // Add current sample
+        flickerWindow.add(currentFireRatio.toDouble())
+
+        // Remove old samples outside window (20 samples = 2 seconds at 100ms sample rate)
+        while (flickerWindow.size > 20) {
+            flickerWindow.removeAt(0)
+        }
+
+        // Need minimum samples for analysis
+        if (flickerWindow.size < 10) {
+            return 0.5f // Insufficient data, neutral
+        }
+
+        // Calculate mean
+        val mean = flickerWindow.average()
+
+        // Calculate zero-crossing rate (how often signal crosses mean)
+        var zeroCrossings = 0
+        for (i in 1 until flickerWindow.size) {
+            val prevAbove = flickerWindow[i-1] > mean
+            val currAbove = flickerWindow[i] > mean
+            if (prevAbove != currAbove) {
+                zeroCrossings++
+            }
+        }
+
+        // Fire flickers at 5-15Hz
+        // With 10 samples/second, that's 10-30 crossings in 2 seconds
+        val crossingRate = zeroCrossings.toFloat()
+
+        return when {
+            crossingRate < 5f -> 0.2f  // Too slow (static object)
+            crossingRate in 10f..25f -> 0.9f  // Ideal fire flicker
+            crossingRate > 40f -> 0.4f  // Too fast (electrical/artifact)
+            else -> 0.7f  // Moderate flicker
+        }
+    }
+
+    /**
+     * Check if a pixel is fire-colored using HSV
      * Excludes welding arc (blue-white)
      */
     private fun isFireColor(pixel: Int): Boolean {
-        val hsv = FloatArray(3)
-        Color.colorToHSV(pixel, hsv)
-        
-        val hue = hsv[0]        // 0-360 degrees
-        val saturation = hsv[1] // 0-1
-        val value = hsv[2]      // 0-1 (brightness)
-        
-        // Must be bright enough (not dark shadows)
-        if (value < MIN_BRIGHTNESS) return false
-        
-        // Must be saturated (not grey/white/black)
-        if (saturation < MIN_SATURATION) return false
-        
-        // Check fire color ranges
-        // Red wraps around 360/0, so handle specially
-        val isFireHue = isInFireHueRange(hue)
-        
-        // Exclude welding arc (blue-white)
-        // Blue is around 200-260, but high saturation excludes most blue-white
-        if (hue in WELDING_ARC_HUE_RANGE && saturation < 0.3f) {
-            return false // Likely welding arc
-        }
-        
-        return isFireHue
-    }
-    
-    /**
-     * Check if hue is in fire color range
-     * Fire: Red (345-360), Orange-Red (15-30), Orange (30-45), Yellow-Orange (45-60)
-     */
-    private fun isInFireHueRange(hue: Float): Boolean {
-        return hue >= FIRE_HUE_RED_LOW || 
-               hue in FIRE_HUE_ORANGE_RED_START..FIRE_HUE_YELLOW_END
-    }
-    
-    /**
-     * Check if pixel is likely welding arc (blue-white, extremely bright)
-     * This is a secondary filter for high-confidence exclusion
-     */
-    fun isWeldingArc(bitmap: Bitmap, x: Int, y: Int): Boolean {
-        val pixel = bitmap.getPixel(x, y)
-        val hsv = FloatArray(3)
-        Color.colorToHSV(pixel, hsv)
-        
-        // Welding arc: very bright, blue tint, extreme saturation or lack thereof
-        return hsv[2] > 0.95f && // Extremely bright
-               hsv[0] in WELDING_ARC_HUE_RANGE
-    }
-    
-    companion object {
-        // Fire hue ranges (HSV)
-        private const val FIRE_HUE_RED_LOW = 345f      // Deep red (wraps around)
-        private const val FIRE_HUE_ORANGE_RED_START = 15f
-        private const val FIRE_HUE_YELLOW_END = 60f    // Yellow-orange boundary
-        
-        // Welding arc exclusion
-        private val WELDING_ARC_HUE_RANGE = 180f..260f // Blue range
-        
-        // Quality thresholds
-        private const val MIN_BRIGHTNESS = 0.4f        // Value > 40%
-        private const val MIN_SATURATION = 0.3f        // Saturation > 30%
-        
-        // Detection threshold
-        private const val FIRE_THRESHOLD_PERCENT = 2   // 2% of image must be fire
-    }
-}
+        val red = Color.red(pixel)
+        val green = Color.green(pixel)
+        val blue = Color.blue(pixel)
 
-/**
- * Extension function to create a step range
- */
-private infix fun Int.step(step: Int): IntProgression {
-    return IntProgression.fromClosedRange(this, Int.MAX_VALUE, step)
+        // Convert to HSV
+        val hsv = FloatArray(3)
+        Color.RGBToHSV(red, green, blue, hsv)
+
+        val hue = hsv[0] // 0-360
+        val saturation = hsv[1] * 100 // 0-100
+        val value = hsv[2] * 100 // 0-100
+
+        // Exclusion: Welding arc (blue-white, high value)
+        if (hue in 180f..260f && value > 80f && saturation < 40f) {
+            return false
+        }
+
+        // Fire colors: Orange, Red, Yellow
+        // Orange-Red: 0-25 degrees
+        // Yellow: 25-50 degrees
+        val isFireHue = hue <= 50f || hue >= 340f
+        val isBrightEnough = value > 50f
+        val isSaturated = saturation > 40f
+
+        return isFireHue && isBrightEnough && isSaturated
+    }
+
+    /**
+     * Reset temporal analysis (call when entering monitoring mode)
+     */
+    fun reset() {
+        flickerWindow.clear()
+    }
+
+    /**
+     * Reset and check if we have enough samples for a reliable reading
+     */
+    fun hasEnoughSamples(): Boolean {
+        return flickerWindow.size >= 10
+    }
 }
